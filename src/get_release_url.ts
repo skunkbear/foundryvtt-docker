@@ -166,7 +166,7 @@ async function main(): Promise<number> {
     }
 
     // Generate a presigned URL and print it to stdout.
-    const releaseURL: string | null = await fetchReleaseURL(
+    const releaseURL: string | null = await getReleaseURL(
         foundry_build,
         retries,
     );
@@ -183,3 +183,74 @@ async function main(): Promise<number> {
 (async () => {
     process.exitCode = await main();
 })();
+
+//SKUNK TIME
+
+import { promises as fs } from "fs";
+import * as path from "path";
+
+type ReleaseURLCache = {
+    [build: string]: ReleaseURLCacheEntry;
+};
+
+type ReleaseURLCacheEntry = {
+    url: string | null; //not sure why this should be nullable but it seems to match with what they already got going on in here
+    timestamp: number; // epoch ms
+};
+
+if (!process.env.SKUNK_RELEASE_URL_CACHE) {
+    throw new Error(
+        "RELEASE_URL_CACHE environment variable not set. The SKUNK VERSION of felddy/foundryvtt REQUIRES THIS VARIABLE!!!!",
+    );
+}
+const URL_CACHE_FILE_PATH = path.join(
+    process.env.SKUNK_RELEASE_URL_CACHE,
+    "release-url-cache.json",
+);
+const ONE_MINUTE = 60 * 1000;
+
+async function readReleaseURLCache(): Promise<ReleaseURLCache> {
+    try {
+        const data = await fs.readFile(URL_CACHE_FILE_PATH, "utf-8");
+        return JSON.parse(data) as ReleaseURLCache;
+    } catch (err) {
+        return {}; // file doesn't exist or invalid
+    }
+}
+
+async function writeEntry(entry: ReleaseURLCache): Promise<void> {
+    await fs.writeFile(
+        URL_CACHE_FILE_PATH,
+        JSON.stringify(entry, null, 2),
+        "utf-8",
+    );
+}
+
+/**
+ * Writes a URL with current datetime unless a recent entry exists.
+ * If an entry exists within the last minute, returns that URL instead.
+ */
+export async function getReleaseURL(
+    build: string,
+    retries: number,
+): Promise<string | null> {
+    const now = Date.now();
+    const existingCache = await readReleaseURLCache();
+    const existingEntry = existingCache[build];
+
+    if (existingEntry && now - existingEntry.timestamp < ONE_MINUTE) {
+        // Recent entry exists → return its URL
+        return existingEntry.url;
+    }
+
+    // Otherwise write new entry
+    const newEntry: ReleaseURLCacheEntry = {
+        url: await fetchReleaseURL(build, retries),
+        timestamp: now,
+    };
+
+    existingCache[build] = newEntry;
+
+    await writeEntry(existingCache);
+    return newEntry.url;
+}
