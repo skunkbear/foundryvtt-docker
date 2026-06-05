@@ -37,6 +37,17 @@ import nodeFetch, { Headers, Response } from "node-fetch";
 import process from "process";
 import winston from "winston";
 
+if (!process.env.SKUNK_RELEASE_URL_CACHE) {
+    throw new Error(
+        "RELEASE_URL_CACHE environment variable not set. The SKUNK VERSION of felddy/foundryvtt REQUIRES THIS VARIABLE!!!!",
+    );
+}
+const URL_CACHE_FILE_PATH = path.join(
+    process.env.SKUNK_RELEASE_URL_CACHE,
+    "release-url-cache.json",
+);
+const ONE_MINUTE = 60 * 1000;
+
 // Setup globals, to be configured in main()
 var cookieJar: CookieJar;
 var fetch: typeof nodeFetch;
@@ -198,22 +209,13 @@ type ReleaseURLCacheEntry = {
     timestamp: number; // epoch ms
 };
 
-if (!process.env.SKUNK_RELEASE_URL_CACHE) {
-    throw new Error(
-        "RELEASE_URL_CACHE environment variable not set. The SKUNK VERSION of felddy/foundryvtt REQUIRES THIS VARIABLE!!!!",
-    );
-}
-const URL_CACHE_FILE_PATH = path.join(
-    process.env.SKUNK_RELEASE_URL_CACHE,
-    "release-url-cache.json",
-);
-const ONE_MINUTE = 60 * 1000;
-
 async function readReleaseURLCache(): Promise<ReleaseURLCache> {
     try {
         const data = await fs.readFile(URL_CACHE_FILE_PATH, "utf-8");
         return JSON.parse(data) as ReleaseURLCache;
     } catch (err) {
+        console.error("Failed to read release URL cache");
+        console.error(err);
         return {}; // file doesn't exist or invalid
     }
 }
@@ -242,15 +244,34 @@ export async function getReleaseURL(
         // Recent entry exists → return its URL
         return existingEntry.url;
     }
-
+    let newEntry: ReleaseURLCacheEntry | null = null;
     // Otherwise write new entry
-    const newEntry: ReleaseURLCacheEntry = {
-        url: await fetchReleaseURL(build, retries),
-        timestamp: now,
-    };
+    try {
+        newEntry = {
+            url: await fetchReleaseURL(build, retries),
+            timestamp: now,
+        };
+    } catch (e) {
+        logger.error(
+            `Error fetching release URL:
+             ${e}
+            Will try to use cached URL instead, even if it's old`,
+        );
+        if (existingEntry) {
+            return existingEntry.url;
+        } else {
+            throw e;
+        }
+    }
 
     existingCache[build] = newEntry;
 
-    await writeEntry(existingCache);
+    try {
+        await writeEntry(existingCache);
+    } catch (e) {
+        logger.error("Failed to write release URL to cache file");
+        logger.error(e);
+    }
+
     return newEntry.url;
 }
