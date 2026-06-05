@@ -1,0 +1,1 @@
+docker build . --tag skunkbear/foundryvtt:14
