@@ -1,0 +1,1 @@
+docker build --tag skunkbear/foundryvtt:14 https://github.com/skunkbear/foundryvtt-docker.git#develop --build-arg CONTAINER_VERSION=14.364.0   --build-arg FOUNDRY_VERSION=14.364 
